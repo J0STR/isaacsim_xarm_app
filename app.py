@@ -32,7 +32,9 @@ from isaacsim.core.api.simulation_context import SimulationContext
 from isaacsim.sensors.camera import Camera
 import omni.isaac.core.utils.prims as prim_utils
 
+
 from src.udp_thread import udp_sender_worker
+from src.robot_functions import get_joints, set_joints
 
 world = World()
 simulation_context = SimulationContext()
@@ -81,7 +83,7 @@ DynamicCuboid(
 ))
 
 # Add robot 1
-robot_prim_path = "/World/Robot_01"
+robot_prim_path = "/World/Robot_right"
 default_joints = np.array([0.0, -45, 0.0, 45, 0.0, 90, 0.0])
 add_reference_to_stage(usd_path=asset_path, prim_path=robot_prim_path)
 stage = world.stage
@@ -94,7 +96,7 @@ xform.AddOrientOp().Set(Gf.Quatf(0.7071068, 0.0, 0.0, -0.7071068))
 base_mat = xform.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
 robot_01_prim_matrix_inverse = base_mat.GetInverse()
 # set default joint positions
-base_joint_path = "/World/Robot_01/xarm7/joints" 
+base_joint_path = "/World/Robot_right/xarm7/joints" 
 for i, angle in enumerate(default_joints):
     joint_index = i + 1
     joint_path = f"{base_joint_path}/joint{joint_index}"
@@ -106,15 +108,16 @@ for i, angle in enumerate(default_joints):
             val_attr.Set(float(angle))
     else:
         print(f"Warning: Could not find joint at {joint_path}")
-robot_01 = world.scene.add(
+robot_right = world.scene.add(
     Robot(
-        prim_path="/World/Robot_01/xarm7",
-        name="robot_01",
+        prim_path="/World/Robot_right/xarm7",
+        name="robot_right",
         )
 )
 
+
 # Add robot 2
-robot_prim_path = "/World/Robot_02"
+robot_prim_path = "/World/Robot_left"
 default_joints = np.array([0.0, -45, 0.0, 45, 0.0, 90, 0.0])
 add_reference_to_stage(usd_path=asset_path, prim_path=robot_prim_path)
 stage = world.stage
@@ -123,7 +126,7 @@ xform = UsdGeom.Xformable(prim)
 xform.ClearXformOpOrder() 
 xform.AddTranslateOp().Set(Gf.Vec3d(0.0, -0.545, 0.8125))
 xform.AddOrientOp().Set(Gf.Quatf(0.7071068, 0.0, 0.0, 0.7071068))
-base_joint_path = "/World/Robot_02/xarm7/joints" 
+base_joint_path = "/World/Robot_left/xarm7/joints" 
 for i, angle in enumerate(default_joints):
     joint_index = i + 1
     joint_path = f"{base_joint_path}/joint{joint_index}"
@@ -135,16 +138,16 @@ for i, angle in enumerate(default_joints):
             val_attr.Set(float(angle))
     else:
         print(f"Warning: Could not find joint at {joint_path}")
-robot_02 = world.scene.add(
+robot_left = world.scene.add(
     Robot(
-        prim_path="/World/Robot_02/xarm7", 
-        name="robot_02",
+        prim_path="/World/Robot_left/xarm7", 
+        name="robot_left",
         )
 )
 
-cam_wrist_right = Camera(prim_path="/World/Robot_01/xarm7/link7/link_eef/wrist_cam",
+cam_wrist_right = Camera(prim_path="/World/Robot_right/xarm7/link7/link_eef/wrist_cam",
                          resolution=(640, 480))
-cam_wrist_left  = Camera(prim_path="/World/Robot_02/xarm7/link7/link_eef/wrist_cam",
+cam_wrist_left  = Camera(prim_path="/World/Robot_left/xarm7/link7/link_eef/wrist_cam",
                          resolution=(640, 480))
 cam_top_view  = Camera(prim_path="/World/Desk/Desk/top_view_cam",
                          resolution=(640, 480))
@@ -155,6 +158,7 @@ cam_top_view.initialize()
 
 
 simulation_context.play()
+world.reset()
 simulation_context.set_simulation_dt(physics_dt = 1.0 /120.0,
                                      rendering_dt = 1.0 / 60.0)
 
@@ -169,46 +173,43 @@ sender_thread.start()
 
 last_send_time = 0
 send_interval = 1.0 / 30.0
+default_joints = np.array([0.0, -np.pi/4, 0.0, np.pi/4, 0.0, np.pi/2, 0.0, 0.4])
 
 while True:
     simulation_app.update()
     current_sim_time = time.perf_counter()
+     
+    joints_robot_right = get_joints(robot_right)
+    joints_robot_left = get_joints(robot_left)
+    all_joints = np.hstack((joints_robot_right,joints_robot_left))
 
+    set_joints(robot_right, default_joints)
+    set_joints(robot_left, default_joints)
 
-    # 2. Check if it's time to send (Timer logic)
+    # Check if it's time to send
     if current_sim_time - last_send_time >= send_interval:
         # Get data from cameras
-        frames = [
+        data = [
             cam_top_view.get_rgb(),
             cam_wrist_right.get_rgb(),
-            cam_wrist_left.get_rgb()
+            cam_wrist_left.get_rgb(),
+            all_joints
         ]
-        
-        # Push to queue without blocking the simulation
         try:
-            image_queue.put_nowait(frames)
+            image_queue.put_nowait(data)
             last_send_time = current_sim_time
         except queue.Full:
             print("Worker full!")
             pass
 
-
-    rgb_data = cam_top_view.get_rgb()
-    
+    rgb_data = cam_wrist_left.get_rgb()    
     if rgb_data is not None:
-        # 3. Convert RGB (Isaac) to BGR (OpenCV)
-        # Note: rgb_data is a numpy array
         bgr_frame = cv2.cvtColor(rgb_data, cv2.COLOR_RGB2BGR)
-        
-        # 4. Display the frame
         cv2.imshow("Wrist Camera Left", bgr_frame)
-        
-        # 5. Required to refresh the window and allow 'q' to quit
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     end = time.perf_counter()
-    print(simulation_context.current_time)
     
 
 # Cleanup
@@ -217,4 +218,3 @@ sender_thread.join(timeout=2.0)
 udp_socket.close()
 cv2.destroyAllWindows()
 simulation_app.close()
-
