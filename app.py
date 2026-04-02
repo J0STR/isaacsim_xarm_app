@@ -1,11 +1,3 @@
-# Check out the standalone examples for more details on different implementations
-# - Linux: ~/.local/share/ov/pkg/isaac_sim-x.x.x/standalone_examples
-# - Windows: %userprofile%\AppData\Local\ov\pkg\isaac_sim-x.x.x\standalone_examples
-# - Container: /isaac-sim/standalone_examples
-
-# Import and launch the Omniverse Toolkit before any other imports.
-# Note: Omniverse loads various plugins at runtime which
-# cannot be imported unless the Toolkit is already running.
 from isaacsim import SimulationApp
 
 
@@ -19,15 +11,17 @@ args, _ = parser.parse_known_args()
 # See DEFAULT_LAUNCHER_CONFIG for available configuration
 # https://docs.omniverse.nvidia.com/py/isaacsim/source/extensions/omni.isaac.kit/docs/index.html
 launch_config = {"headless": True}
-# Launch the Toolkit
 simulation_app = SimulationApp(launch_config)
-
 
 # Locate any other import statement after this point
 import omni
 import platform
 import numpy as np
 import cv2
+import time
+import queue
+import threading
+import socket
 
 from isaacsim.core.utils.stage import add_reference_to_stage
 from isaacsim.core.api.robots import Robot
@@ -37,6 +31,8 @@ from isaacsim.core.api.world import World
 from isaacsim.core.api.simulation_context import SimulationContext
 from isaacsim.sensors.camera import Camera
 import omni.isaac.core.utils.prims as prim_utils
+
+from src.udp_thread import udp_sender_worker
 
 world = World()
 simulation_context = SimulationContext()
@@ -159,11 +155,44 @@ cam_top_view.initialize()
 
 
 simulation_context.play()
+simulation_context.set_simulation_dt(physics_dt = 1.0 /120.0,
+                                     rendering_dt = 1.0 / 60.0)
+
+
+udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+dest_addr = ("127.0.0.1", 12345)
+
+image_queue = queue.Queue(maxsize=1)
+sender_thread = threading.Thread(target=udp_sender_worker,
+                                 args=(image_queue,udp_socket, dest_addr), daemon=True)
+sender_thread.start()
+
+last_send_time = 0
+send_interval = 1.0 / 30.0
 
 while True:
     simulation_app.update()
+    current_sim_time = time.perf_counter()
 
-    # 2. Get the RGB data
+
+    # 2. Check if it's time to send (Timer logic)
+    if current_sim_time - last_send_time >= send_interval:
+        # Get data from cameras
+        frames = [
+            cam_top_view.get_rgb(),
+            cam_wrist_right.get_rgb(),
+            cam_wrist_left.get_rgb()
+        ]
+        
+        # Push to queue without blocking the simulation
+        try:
+            image_queue.put_nowait(frames)
+            last_send_time = current_sim_time
+        except queue.Full:
+            print("Worker full!")
+            pass
+
+
     rgb_data = cam_top_view.get_rgb()
     
     if rgb_data is not None:
@@ -178,7 +207,14 @@ while True:
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
+    end = time.perf_counter()
+    print(simulation_context.current_time)
+    
+
 # Cleanup
+image_queue.put(None)
+sender_thread.join(timeout=2.0)
+udp_socket.close()
 cv2.destroyAllWindows()
 simulation_app.close()
 
