@@ -67,8 +67,14 @@ def main():
             obs_dict[data_names[1]] = frame_wrist_right
             obs_dict[data_names[2]] = frame_wrist_left
 
-            print(obs_dict)
-            print(time.perf_counter()-start)
+            cv_converted_frame = cv2.cvtColor(obs_dict[data_names[0]], cv2.COLOR_RGB2BGR)            
+            window_name = data_names.get(0, f"Unknown Camera {0}")
+            cv2.imshow(window_name, cv_converted_frame)
+
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+            
+            end = time.perf_counter()
 
     except KeyboardInterrupt:
         sock.close()

@@ -33,22 +33,22 @@ def tcp_sender_worker(image_queue: queue.Queue, port=12345):
                 # Unpack the data
                 top_view, wrist_r, wrist_l, joints = data_list
                 
-                # 1. Convert & Compress (Only happens when event is triggered!)
+                # Convert & Compress
                 encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
-                _, img0 = cv2.imencode('.jpg', cv2.cvtColor(top_view, cv2.COLOR_RGB2BGR), encode_param)
-                _, img1 = cv2.imencode('.jpg', cv2.cvtColor(wrist_r, cv2.COLOR_RGB2BGR), encode_param)
-                _, img2 = cv2.imencode('.jpg', cv2.cvtColor(wrist_l, cv2.COLOR_RGB2BGR), encode_param)
+                _, img0 = cv2.imencode('.jpg', top_view, encode_param)
+                _, img1 = cv2.imencode('.jpg', wrist_r, encode_param)
+                _, img2 = cv2.imencode('.jpg', wrist_l, encode_param)
                 
                 joint_bytes = joints.astype(np.float32).tobytes()
                 img0_bytes = img0.tobytes()
                 img1_bytes = img1.tobytes()
                 img2_bytes = img2.tobytes()
 
-                # 2. Build the Header (4 unsigned ints = 16 bytes)
+                # Build the Header (4 unsigned ints = 16 bytes)
                 # Format: JointLen, Img0Len, Img1Len, Img2Len
                 header = struct.pack('IIII', len(joint_bytes), len(img0_bytes), len(img1_bytes), len(img2_bytes))
                 
-                # 3. Send as one continuous block
+                # Send as one continuous block
                 client_conn.sendall(header + joint_bytes + img0_bytes + img1_bytes + img2_bytes)
                 
         except (ConnectionResetError, BrokenPipeError):

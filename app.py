@@ -175,19 +175,17 @@ sender_thread.start()
 last_send_time = 0
 send_interval = 1.0 / 30.0
 default_joints = np.array([0.0, -np.pi/4, 0.0, np.pi/4, 0.0, np.pi/2, 0.0, 0.4])
+event_triggered = False
+current_sim_time = time.perf_counter()
 
 while True:
     simulation_app.update()
-    current_sim_time = time.perf_counter()
+    
+    
      
     joints_robot_right = get_joints(robot_right)
     joints_robot_left = get_joints(robot_left)
     all_joints = np.hstack((joints_robot_right,joints_robot_left))
-
-    event_triggered = False 
-    if cv2.waitKey(1) & 0xFF == ord('s'):
-        event_triggered = True
-        print("Event Triggered! Sending data...")
 
     set_joints(robot_right, default_joints)
     set_joints(robot_left, default_joints)
@@ -201,6 +199,7 @@ while True:
             cam_wrist_left.get_rgb(),
             all_joints
         ]
+        event_triggered = False
         try:
             image_queue.put_nowait(data)
             last_send_time = current_sim_time
@@ -215,6 +214,9 @@ while True:
             break
 
     end = time.perf_counter()
+    if end-current_sim_time > 0.04:
+        event_triggered = True
+        current_sim_time = time.perf_counter()
     
 
 # Cleanup
