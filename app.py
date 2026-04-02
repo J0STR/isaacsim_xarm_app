@@ -80,7 +80,7 @@ DynamicCuboid(
     position=np.array([0, 0, 1.0]), # Using the current stage units which is in meters by default.
     scale=np.array([0.05, 0.05, 0.05]), # most arguments accept mainly numpy arrays.
     color=np.array([0, 0, 1.0]), # RGB channels, going from 0-1
-    mass=0.1,
+    mass=0.01,
 ))
 
 # Add robot 1
@@ -168,30 +168,46 @@ udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 dest_addr = ("127.0.0.1", 12345)
 
 image_queue = queue.Queue(maxsize=1)
+action_queue = queue.Queue(maxsize=1)
 sender_thread = threading.Thread(target=tcp_sender_worker,
-                                 args=(image_queue, 12345), daemon=True)
+                                 args=(image_queue, 12345, action_queue), daemon=True)
 sender_thread.start()
 
 last_send_time = 0
 send_interval = 1.0 / 30.0
-default_joints = np.array([0.0, -np.pi/4, 0.0, np.pi/4, 0.0, np.pi/2, 0.0, 0.4])
-event_triggered = False
-current_sim_time = time.perf_counter()
+default_joints = np.array([0.0, -np.pi/4, 0.0, np.pi/4, 0.0, np.pi/2, 0.0, 850])
+action_requested = False
+waiting_for_model = False
+previous_time_delta = 0
+
+action_chunks = None
+action_index = 0
+fps = 30
 
 while True:
     simulation_app.update()
-    
-    
-     
+       
     joints_robot_right = get_joints(robot_right)
     joints_robot_left = get_joints(robot_left)
     all_joints = np.hstack((joints_robot_right,joints_robot_left))
 
-    set_joints(robot_right, default_joints)
-    set_joints(robot_left, default_joints)
+    rgb_data = cam_top_view.get_rgb()    
+    if rgb_data is not None:
+        bgr_frame = cv2.cvtColor(rgb_data, cv2.COLOR_RGB2BGR)
+        cv2.imshow("Wrist Camera Left", bgr_frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-    # Check if it's time to send
-    if event_triggered:
+    if action_chunks is None or action_index >= 10:
+        if waiting_for_model:
+            if not action_queue.empty():
+                action_chunks = action_queue.get()
+                waiting_for_model = False
+                action_index = 0
+        else:
+            action_requested = True
+
+    if action_requested:
         # Get data from cameras
         data = [
             cam_top_view.get_rgb(),
@@ -199,24 +215,23 @@ while True:
             cam_wrist_left.get_rgb(),
             all_joints
         ]
-        event_triggered = False
+        action_requested = False
+        waiting_for_model = True
         try:
-            image_queue.put_nowait(data)
-            last_send_time = current_sim_time
+            image_queue.put_nowait(data)            
         except queue.Full:
             print("Previous event still sending, skipping this one.")
+    
 
-    rgb_data = cam_wrist_left.get_rgb()    
-    if rgb_data is not None:
-        bgr_frame = cv2.cvtColor(rgb_data, cv2.COLOR_RGB2BGR)
-        cv2.imshow("Wrist Camera Left", bgr_frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+    if action_chunks is not None and action_index < 10:
+        joint_right = action_chunks[action_index][:8]
+        joint_left = action_chunks[action_index][8:]
+        set_joints(robot_right, joint_right)
+        set_joints(robot_left, joint_left)
 
-    end = time.perf_counter()
-    if end-current_sim_time > 0.04:
-        event_triggered = True
-        current_sim_time = time.perf_counter()
+        current_time = simulation_context.current_time
+        if current_time-previous_time_delta >= 1/fps:
+            action_index += 1
     
 
 # Cleanup
