@@ -3,7 +3,7 @@ import numpy as np
 
 def get_joints(robot):
     joints_robot = robot.get_joint_positions()
-    joints_robot[7]=0.85-joints_robot[7]
+    joints_robot[7]=0.85 - joints_robot[7]
     return joints_robot[:8]
 
 

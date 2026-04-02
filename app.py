@@ -35,6 +35,7 @@ import omni.isaac.core.utils.prims as prim_utils
 
 from src.udp_thread import udp_sender_worker
 from src.robot_functions import get_joints, set_joints
+from src.tcp_thread import tcp_sender_worker
 
 world = World()
 simulation_context = SimulationContext()
@@ -167,8 +168,8 @@ udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 dest_addr = ("127.0.0.1", 12345)
 
 image_queue = queue.Queue(maxsize=1)
-sender_thread = threading.Thread(target=udp_sender_worker,
-                                 args=(image_queue,udp_socket, dest_addr), daemon=True)
+sender_thread = threading.Thread(target=tcp_sender_worker,
+                                 args=(image_queue, 12345), daemon=True)
 sender_thread.start()
 
 last_send_time = 0
@@ -183,11 +184,16 @@ while True:
     joints_robot_left = get_joints(robot_left)
     all_joints = np.hstack((joints_robot_right,joints_robot_left))
 
+    event_triggered = False 
+    if cv2.waitKey(1) & 0xFF == ord('s'):
+        event_triggered = True
+        print("Event Triggered! Sending data...")
+
     set_joints(robot_right, default_joints)
     set_joints(robot_left, default_joints)
 
     # Check if it's time to send
-    if current_sim_time - last_send_time >= send_interval:
+    if event_triggered:
         # Get data from cameras
         data = [
             cam_top_view.get_rgb(),
@@ -199,8 +205,7 @@ while True:
             image_queue.put_nowait(data)
             last_send_time = current_sim_time
         except queue.Full:
-            print("Worker full!")
-            pass
+            print("Previous event still sending, skipping this one.")
 
     rgb_data = cam_wrist_left.get_rgb()    
     if rgb_data is not None:
